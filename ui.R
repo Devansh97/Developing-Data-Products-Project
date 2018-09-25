@@ -23,7 +23,7 @@ shinyUI(pageWithSidebar(
                         multiple = FALSE,selected=NULL)),
                 actionButton("goButton", "GO!"),
                 br(),
-                p(strong(em("Documentation:",a("Body Mass Index Classification for Adults",href="https://github.com/Devansh97/Developing-Data-Products-Project/blob/master/README.md")))),
+                p(strong(em("Documentation:",a("Body Mass Index Classification for Adults",href="https://github.com/Devansh97/Developing-Data-Products-Project/blob/master/README.html")))),
                 p(strong(em("Github repository:",a("Developing Data Products - Shiny Application and Reproducible Pitch",href="https://github.com/Devansh97/Developing-Data-Products-Project"))))
         ),
         mainPanel(
