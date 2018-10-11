@@ -1,0 +1,176 @@
+Presentation
+========================================================
+author: Devansh Babbar
+date: 11 October 2018
+autosize: true
+
+Introduction
+========================================================
+
+The app basically focuses on projecting retirement assets over time.Basically Retirement is the withdrawal from one's position or occupation or from one's active working life.A person may also semi-retire by reducing work hours.Many people choose to retire when they are eligible for private or public pension benefits, although some are forced to retire when bodily conditions no longer allow the person to work any longer (by illness or accident) or as a result of legislation concerning their position.In most countries, the idea of retirement is of recent origin, being introduced during the late 19th and early 20th centuries. Previously, low life expectancy and the absence of pension arrangements meant that most workers continued to work until death. Germany was the first country to introduce retirement benefits in 1889.
+
+Server.R
+========================================================
+
+```{r}
+library(shiny)
+
+shinyServer(function(input, output) {
+  projectRetirement <- reactive({ 
+	yearsObserving = input$n.obs # what period of time do we want to look at?
+	monthsObserving = 12 * yearsObserving
+
+	ageNow = input$age.now
+	delayYears = input$years.wait
+	retireAgeYears = ageNow + delayYears
+	ageMonths= ageNow * 12
+	retireAgeMonths = retireAgeYears * 12
+
+	numSims = input$n.sim # how many simulations do we want to perform?
+
+	liquidN401Ks = input$liquid.n401Ks
+
+	totalPension = input$total.pension
+	numPensionPayouts = input$number.increments
+	pensionPayout = totalPension/numPensionPayouts
+
+	# PENSION MATRIX
+	if ( (numPensionPayouts > 0) & (totalPension > 0) ) {
+		pensionMatrix = matrix(0,1,numSims) #matrix w bogus row1
+		for (j in 1:numPensionPayouts) {
+			pensionMatrixTmp = matrix(j*pensionPayout, monthsObserving/numPensionPayouts, numSims) 
+			pensionMatrix = rbind(pensionMatrix,pensionMatrixTmp)
+		}
+		if (monthsObserving %% numPensionPayouts != 0) { #to avoid having pension drop out at end due to modulo
+			pensionMatrixTmp = matrix(numPensionPayouts*pensionPayout, monthsObserving %% numPensionPayouts, numSims)
+			pensionMatrix = rbind(pensionMatrix, pensionMatrixTmp)
+		} 
+		pensionMatrix = pensionMatrix[-(1),]  #remove bogus row1
+	}	else { # no pension
+			pensionMatrix = matrix(0,monthsObserving, numSims)
+	}
+	
+	monthlyWithdrawals = input$monthly.withdrawals
+	
+	ageSeq = seq(from=ageMonths, by=1, length.out=monthsObserving)
+	ageVec = matrix(ageSeq)
+	ageVecYears = ageVec/12
+
+	ssAmount = input$social.security
+	ssStartYear = input$social.security.start
+	ssStartMonth = ssStartYear * 12
+	ssStartDelta =  ssStartMonth - ageMonths
+	if (ssStartDelta < 0 ) { ssStartDelta = 0 } # not dealing with negative time
+	ssMatrixA = matrix(0, ssStartDelta, numSims)  # two matrices - one before SS starts
+	ssMatrixB = matrix(ssAmount, (monthsObserving-ssStartDelta), numSims)  # one matrix for social security time
+	ssMatrix = rbind(ssMatrixA, ssMatrixB)
+
+	yearlyCapitalContribs = input$capital.contribs
+	yearsContributing2capital = input$years.contributing
+
+	if ( (yearlyCapitalContribs > 0) & (yearsContributing2capital > 0) ) { #assuming that capital contribution time finite
+		monthlyCapitalContribs = yearlyCapitalContribs / 12
+		monthsContributing2capital = yearsContributing2capital * 12
+		capitalContribMatrixA = matrix(monthlyCapitalContribs, monthsContributing2capital, numSims) 
+		capitalContribMatrixB = matrix(0, (monthsObserving-monthsContributing2capital), numSims) 
+		capitalContribMatrix = rbind(capitalContribMatrixA, capitalContribMatrixB)
+	} else {
+		capitalContribMatrix = matrix(0, monthsObserving, numSims)
+	}
+
+	startCapital = pensionMatrix + liquidN401Ks + ssMatrix + capitalContribMatrix
+
+	# monthly Investment and Inflation assumptions
+	annualMeanReturn = input$annual.mean.return/100
+	monthlyReturnMean = annualMeanReturn / 12
+	annualReturnStdDev = input$annual.ret.std.dev/100
+	monthlyReturnStdDev = annualReturnStdDev / sqrt(12)
+	# simulate Returns
+	investReturnsMatrix = matrix(0, monthsObserving, numSims)
+	investReturnsMatrix[] = rnorm(monthsObserving * numSims, mean = monthlyReturnMean, sd = monthlyReturnStdDev)
+	
+	annualInflation = input$annual.inflation/100
+	monthlyInflation = annualInflation / 12
+	annualInflationStdDev = input$annual.inf.std.dev/100
+	monthlyInflationStdDev = annualInflationStdDev / sqrt(12)
+	# simulate effect of inflation
+	inflationMatrix = matrix(0, monthsObserving, numSims)
+	inflationMatrix[] = rnorm(monthsObserving * numSims, mean = monthlyInflation, sd = monthlyInflationStdDev)
+
+	nav = startCapital
+	
+	for (j in 1:(monthsObserving-1)) {
+		startCapital[j + 1, ] = startCapital[j, ] * (1 + investReturnsMatrix[j, ] - inflationMatrix[j, ]) - monthlyWithdrawals
+		#nav[j , ] = nav[j , ] + startCapital/input$number.increments 
+	}	
+	#nav = nav[-(monthsObserving+1) , ] # remove that last row we added in
+	#for (j in 1:input$number.increments*12) {
+		#if (j %% 12 == 0) {
+		#}
+	#}	
+	
+	startCapital[ startCapital < 0 ] = NA # once nav is below 0 => run out of money
+	Retirement = startCapital / 1000000 # convert to millions
+	Retirement=cbind(ageVecYears,Retirement)
+	#output$documentationText = renderText({"Adjust the slider bars to reflect the retirement scenario you wish to simulate."})
+	output$documentationText = renderText({'... projecting retirement assets over time ...\n'})
+	output$sourceText = renderText({"Idea and original code by Devansh Saxena."})
+	return(Retirement)
+  })
+  
+  output$distPlot <- renderPlot({
+	Retirement = projectRetirement()
+	layout(matrix(c(1,2,1,3),2,2))
+	matplot(Retirement[ , 1], Retirement[ , -1 ], type = 'l', las = 1, ylab='Millions', xlab='Age')
+  })
+		
+})
+
+
+```
+
+Ui.R
+========================================================
+
+```{r, echo=TRUE}
+library(shiny)
+# Define UI for application that plots random distributions 
+shinyUI(fluidPage( #have two open parens
+  # Application title
+  titlePanel("Will I Go Broke During Retirement?"), #complete
+sidebarLayout(position="right",
+	sidebarPanel(
+		helpText('(adjust slider bars to simulate a retirement scenario)\n'),
+		#helpText('......      projecting retirement assets over time ......\n'),
+		sliderInput("age.now", "Current Age:", min = 55, max = 110, value = 59),
+		sliderInput("years.wait", "Years Until Retirement:", min = 0, max = 40, value = 0),
+		sliderInput("n.obs", "Length of Projection (years):", min = 0, max = 40, value = 20),
+		sliderInput("social.security", "Social Security Payment:", min = 0, max = 50000, value = 1000, step = 100, format="$#,##0", locale="us",),
+		sliderInput("social.security.start", "Social Security Start Age:", min = 67.5, max = 72.0, value = 67.5, step = 0.5),
+		sliderInput("liquid.n401Ks", "Liquid Assets and 401Ks:", min =   000000, max =   3000000, value = 500000, step =  10000, format="$#,##0", locale="us"),
+		sliderInput("total.pension", "Pension Lump Sum:", min = 1000000, max = 3500000, value = 2000000, step = 100000, format="$#,##0", locale="us"),
+		sliderInput("number.increments", "Pension Amortized Over (# payments):", min = 1, max = 10, value = 1),
+		sliderInput("capital.contribs", "Continuing Capital Contributions (annual):", min = 0.0, max = 50000.0, value = 1000.0, step = 1000, format="$#,##0", locale="us"),
+		sliderInput("years.contributing", "Years Continuing to Contribute to Capital:", min = 0, max = 20.0, value = 2.0, step = 1),
+		sliderInput("annual.mean.return", "Investment Return (annual %):", min = 0.0, max = 30.0, value = 5.0, step = 0.5),
+		sliderInput("annual.ret.std.dev", "Investment Volatility (annual %):", min = 0.0, max = 25.0, value = 7.0, step = 0.1), 
+		sliderInput("annual.inflation", "Inflation (annual %):", min = 0, max = 20, value = 2.5, step = 0.1),
+		sliderInput("annual.inf.std.dev", "Inflation Volatility (annual %):", min = 0.0, max = 5.0, value = 1.5, step = 0.05),
+		sliderInput("monthly.withdrawals", "Monthly Capital Withdrawals:", min = 0, max = 100000, value = 10000, step = 1000, format="$#,##0", locale="us",),
+		sliderInput("n.sim", "Number of Simulations:", min = 0, max = 2000, value = 200),
+		helpText("Idea and original code by Devansh Saxena.") 
+	), #sidebarPanel
+
+	mainPanel( 
+		textOutput('documentationText'),
+		plotOutput("distPlot", height = "2200px")
+		) #mainPanel
+) #sidebarLayout
+) #fluidPage
+) #shinyUI
+
+```
+
+Conclusion
+========================================================
+This application describes the assets over time during a Retirement.
